@@ -6,7 +6,7 @@ Author: [overment](https://x.com/_overment)
 
 ## Overview
 
-This is a focused, minimal MCP server designed specifically for image generation workflows. Unlike full-featured Replicate clients, this server exposes only what's needed for image generation and editing with official models like Flux, SDXL, and Seedream.
+This is a focused, minimal MCP server designed specifically for image generation workflows. Unlike full-featured Replicate MCP Servers, this server exposes only what's needed for image generation and editing with official models like Flux, SDXL, and Seedream.
 
 **Recommended usage**: Tell your assistant upfront which model you prefer and any specific settings (quality, aspect ratio, style). This reduces tool calls and gets better results faster.
 
@@ -25,7 +25,7 @@ This repo works in two ways:
 
 - **Search Models** — Find image generation models with full input schemas
 - **Generate Images** — Run predictions and get results with expiring URLs
-- **Lightweight** — Only 2 tools, no OAuth complexity
+- **Lightweight** — Only 2 tools
 - **API Key Auth** — Simple Bearer token or X-Api-Key header authentication
 - **Dual Runtime** — Node.js/Bun or Cloudflare Workers
 
