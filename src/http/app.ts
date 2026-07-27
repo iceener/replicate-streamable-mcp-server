@@ -1,37 +1,60 @@
-// Replicate MCP server entry point (Node.js/Hono)
-
-import type { HttpBindings } from '@hono/node-server';
 import { Hono } from 'hono';
-import { config } from '../config/env.js';
-import { serverMetadata } from '../config/metadata.js';
-import { buildServer } from '../core/mcp.js';
-import { corsMiddleware } from './middlewares/cors.js';
-import { replicateAuthMiddleware, requireAuth } from './middlewares/auth.js';
-import { healthRoutes } from './routes/health.js';
-import { buildMcpRoutes } from './routes/mcp.js';
+import type { AppConfig } from '../config/env.js';
+import { createMcpRuntime } from '../core/runtime.js';
+import type { ReplicateToolServices } from '../types/context.js';
+import { logger } from '../utils/logger.js';
+import { mcpAuthResponse } from './auth.js';
+import { boundedMcpRequest } from './body.js';
+import {
+  corsPreflightResponse,
+  requestSecurityResponse,
+  withCors,
+} from './security.js';
 
-export function buildHttpApp(): Hono<{ Bindings: HttpBindings }> {
-  const app = new Hono<{ Bindings: HttpBindings }>();
+export interface HttpRuntimeOptions {
+  runtimeName: string;
+  services?: ReplicateToolServices;
+}
+export interface HttpRuntime {
+  fetch(request: Request): Promise<Response>;
+  close(): Promise<void>;
+}
 
-  // Build MCP server
-  const server = buildServer({
-    name: config.MCP_TITLE || serverMetadata.title,
-    version: config.MCP_VERSION,
-    instructions: serverMetadata.instructions,
+/** Build the fetch-native shell shared by Bun and Cloudflare Workers. */
+export function buildHttpApp(
+  config: AppConfig,
+  options: HttpRuntimeOptions,
+): HttpRuntime {
+  logger.setLevel(config.LOG_LEVEL);
+  const mcp = createMcpRuntime(config, options.services);
+  const mcpPath = config.MCP_PUBLIC_URL.pathname;
+  const app = new Hono();
+
+  app.use('*', async (context, next) => {
+    const rejected = requestSecurityResponse(context.req.raw, config);
+    if (rejected) return rejected;
+    await next();
   });
+  app.get('/health', (context) =>
+    context.json({
+      status: 'ok',
+      runtime: options.runtimeName,
+      protocol: '2026-07-28',
+      legacyMode: config.MCP_LEGACY_MODE,
+      authEnabled: config.AUTH_ENABLED,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+  app.options(mcpPath, (context) => corsPreflightResponse(context.req.raw));
+  app.all(mcpPath, async (context) => {
+    const request = context.req.raw;
+    const authRejection = await mcpAuthResponse(request, config);
+    if (authRejection) return withCors(request, authRejection);
+    const bounded = await boundedMcpRequest(request, config.MCP_MAX_REQUEST_BYTES);
+    if (bounded.rejection) return withCors(request, bounded.rejection);
+    return withCors(request, await mcp.fetch(bounded.request));
+  });
+  app.notFound((context) => context.text('Not Found', 404));
 
-  const transports = new Map();
-
-  // Global middleware
-  app.use('*', corsMiddleware());
-  app.use('*', replicateAuthMiddleware());
-
-  // Public routes
-  app.route('/', healthRoutes());
-
-  // Protected MCP endpoint
-  app.use('/mcp', requireAuth());
-  app.route('/mcp', buildMcpRoutes({ server, transports }));
-
-  return app;
+  return { fetch: async (request) => app.fetch(request), close: mcp.close };
 }

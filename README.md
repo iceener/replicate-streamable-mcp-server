@@ -2,6 +2,10 @@
 
 Lightweight MCP server for AI image generation and editing using Replicate's official models.
 
+> **Release status (2026-07-27):** this repository pins `@modelcontextprotocol/server` and the test-only `@modelcontextprotocol/client` to `2.0.0-beta.5`, with Zod 4 and the candidate `2026-07-28` protocol. The dated protocol and stable v2 SDK are not final at this commit; do not claim final conformance until the release gate is verified.
+
+The Bun and Cloudflare Workers entry points share one fetch-native handler per deployment and create a fresh MCP server for every request. Modern HTTP is stateless; compatibility with 2025-era clients uses the SDK's stateless fallback and does not create MCP sessions.
+
 Author: [overment](https://x.com/_overment)
 
 ## Overview
@@ -18,8 +22,8 @@ For image generation, use black-forest-labs/flux-schnell with 16:9 aspect ratio 
 ## Notice
 
 This repo works in two ways:
-- As a **Node/Hono server** for local workflows
-- As a **Cloudflare Worker** for remote interactions
+- As a fetch-native **Bun server** for local workflows
+- As a fetch-native **Cloudflare Worker** for remote interactions
 
 ## Features
 
@@ -119,29 +123,9 @@ Endpoint: `http://127.0.0.1:8787/mcp`
 
 ### 3. Cloudflare Worker (Deploy)
 
-1. Create KV namespace for session storage:
+1. Update `wrangler.jsonc` for the production URL and exact Host/Origin allowlists. The checked-in values are local-safe defaults.
 
-```bash
-bun x wrangler kv:namespace create TOKENS
-```
-
-Output will show:
-```
-Add the following to your wrangler.toml:
-[[kv_namespaces]]
-binding = "TOKENS"
-id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-```
-
-2. Update `wrangler.toml` with your KV namespace ID:
-
-```toml
-[[kv_namespaces]]
-binding = "TOKENS"
-id = "your-kv-namespace-id-from-step-1"
-```
-
-3. Set secrets:
+2. Set secrets:
 
 ```bash
 # Generate a random token for client authentication
@@ -154,10 +138,13 @@ bun x wrangler secret put REPLICATE_API_TOKEN
 # Paste your Replicate token when prompted
 ```
 
-4. Deploy:
+3. Validate generated types and deploy:
 
 ```bash
-bun x wrangler deploy
+bun run types:worker
+bun run types:worker:check
+bun run build:worker
+bun run deploy
 ```
 
 Endpoint: `https://<worker-name>.<account>.workers.dev/mcp`
@@ -326,25 +313,21 @@ Note: URLs expire in 1 hour.
 | `PORT` | | Server port (default: 3000) |
 | `HOST` | | Server host (default: 127.0.0.1) |
 
-### Cloudflare Workers (wrangler.toml + secrets)
+### Cloudflare Workers (`wrangler.jsonc` + secrets)
 
-**wrangler.toml vars:**
-```toml
-[vars]
-MCP_TITLE = "Replicate MCP Server"
-MCP_VERSION = "1.0.0"
+Relevant `wrangler.jsonc` vars:
+```jsonc
+"vars": {
+  "MCP_TITLE": "Replicate",
+  "MCP_VERSION": "1.0.0"
+}
 ```
 
 **Secrets (set via `wrangler secret put`):**
 - `API_KEY` — Random auth token for clients
 - `REPLICATE_API_TOKEN` — Replicate API token
 
-**KV Namespace:**
-```toml
-[[kv_namespaces]]
-binding = "TOKENS"
-id = "your-kv-namespace-id"
-```
+No KV namespace or MCP session store is required by the v2 serving shell.
 
 ---
 
@@ -354,8 +337,11 @@ id = "your-kv-namespace-id"
 bun dev           # Start with hot reload
 bun run typecheck # TypeScript check
 bun run lint      # Lint code
-bun run build     # Production build
-bun start         # Run production
+bun run build     # Bun production build
+bun run build:worker
+bun run types:worker:check
+bun test           # Modern, legacy, security, and provider-mock tests
+bun start          # Run Bun production entry point
 ```
 
 ---
@@ -373,11 +359,15 @@ src/
 │   └── api/
 │       └── replicate.service.ts # Replicate API client
 ├── http/
-│   ├── app.ts                   # Hono server
-│   └── middlewares/
-│       └── auth.ts              # API key validation
-├── index.ts                     # Node.js entry
-└── worker.ts                    # Workers entry
+│   ├── app.ts                   # Fetch-native HTTP shell
+│   ├── auth.ts                  # MCP API-key boundary
+│   ├── body.ts                  # Bounded request bodies
+│   └── security.ts              # Host, Origin, and strict CORS
+├── core/
+│   ├── mcp.ts                   # Fresh server factory
+│   └── runtime.ts               # Deployment-scoped v2 handler
+├── index.ts                     # Bun entry
+└── worker.ts                    # Workers isolate entry
 ```
 
 ---
@@ -392,7 +382,6 @@ src/
 | "Missing required parameters" | Call `search_models` to see exact input schema |
 | "Rate limit exceeded" | Wait a moment and retry |
 | "Image URL expired" | URLs expire after 1 hour — generate again |
-| KV namespace error | Run `wrangler kv:namespace create TOKENS` and update wrangler.toml |
 
 ### Debugging
 

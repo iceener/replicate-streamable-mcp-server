@@ -1,31 +1,25 @@
-import type { CancellationToken } from '../utils/cancellation.js';
+import type {
+  ModelSearchResult,
+  PredictionResult,
+} from '../services/api/replicate.service.js';
 
-/**
- * Request context passed to tool handlers.
- */
+export interface ReplicateToolServices {
+  searchModels(
+    query: string,
+    apiToken: string,
+    signal?: AbortSignal,
+  ): Promise<ModelSearchResult[]>;
+  runPrediction(
+    modelId: string,
+    input: Record<string, unknown>,
+    apiToken: string,
+    signal?: AbortSignal,
+  ): Promise<PredictionResult>;
+}
+
+/** Request-local values provided to Replicate tool handlers. */
 export interface RequestContext {
-  /**
-   * Session ID from the MCP transport (if available).
-   */
-  sessionId?: string;
-
-  /**
-   * Cancellation token for the current request.
-   */
-  cancellationToken: CancellationToken;
-
-  /**
-   * Request ID from JSON-RPC message.
-   */
-  requestId?: string | number;
-
-  /**
-   * Timestamp when the request was received.
-   */
-  timestamp: number;
-
-  /**
-   * Replicate API token (from header or env).
-   */
   replicateToken?: string;
+  signal: AbortSignal;
+  services?: ReplicateToolServices;
 }
